@@ -264,6 +264,15 @@ def log_write_source(data):
             "cwd": data.get("cwd"),
             "seven_day_pct": (rate_limits.get("seven_day") or {}).get("used_percentage"),
             "five_hour_pct": (rate_limits.get("five_hour") or {}).get("used_percentage"),
+            # diagnostica per il caso "n/d" persistente: rate_limits appare solo per
+            # abbonati Claude.ai Pro/Max (o dietro un gateway con spend limit) e solo
+            # dopo la prima risposta API della sessione (vedi doc statusline ufficiale).
+            # Questi campi permettono di distinguere "chiave rate_limits assente del
+            # tutto" da "presente ma vuota" da "presente con struttura diversa da
+            # quella attesa", senza doverlo indovinare alla cieca.
+            "has_rate_limits_key": "rate_limits" in data,
+            "rate_limits_raw": rate_limits if rate_limits else None,
+            "top_level_keys": sorted(data.keys()),
         }
         os.makedirs(os.path.dirname(DEBUG_LOG_FILE), exist_ok=True)
         lines = []
