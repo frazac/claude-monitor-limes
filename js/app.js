@@ -1044,6 +1044,19 @@ function formatDuration(ms) {
   if (hours > 0) return hours + T.hourUnit + ' ' + minutes + T.minuteUnit;
   return minutes + T.minuteUnit;
 }
+// tempo mancante a un reset: niente arrotondamenti per eccesso sull'unità
+// grande (1h05 non diventa "2h"). Sotto 1,5 ore solo minuti, sotto 2 giorni
+// ore+minuti, oltre giorni+ore.
+function formatRemaining(ms) {
+  const totalMinutes = Math.max(0, Math.ceil(ms / 60000));
+  if (totalMinutes < 90) return totalMinutes + T.minuteUnit;
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours < 48) return hours + T.hourUnit + (minutes ? ' ' + minutes + T.minuteUnit : '');
+  const days = Math.floor(hours / 24);
+  const restHours = hours % 24;
+  return days + T.dayUnit + (restHours ? ' ' + restHours + T.hourUnit : '');
+}
 // formatta un'ora astratta di confine slot (0-24, non legata a una data/tz
 // precisa) rispettando il toggle 24h/AM-PM già in pagina.
 function hourLabel(h) {
@@ -1066,15 +1079,13 @@ function updateTimeDisplays() {
   const now = Date.now();
 
   const weekResetDate = parseResetDate(lastData.reset_date);
-  const daysLeft = Math.max(0, Math.ceil((weekResetDate.getTime() - now) / 86400000));
   document.getElementById('week-reset').textContent = formatDateTime(weekResetDate) +
-    ' (' + T.inPrefix + daysLeft + T.dayUnit + ')';
+    ' (' + T.inPrefix + formatRemaining(weekResetDate.getTime() - now) + ')';
 
   if (lastData.five_hour_reset_date) {
     const sessionResetDate = parseResetDate(lastData.five_hour_reset_date);
-    const hoursLeft = Math.max(0, Math.ceil((sessionResetDate.getTime() - now) / 3600000));
     document.getElementById('hour-reset').textContent = formatDateTime(sessionResetDate) +
-      ' (' + T.inPrefix + hoursLeft + T.hourUnit + ')';
+      ' (' + T.inPrefix + formatRemaining(sessionResetDate.getTime() - now) + ')';
   } else {
     document.getElementById('hour-reset').textContent = '--';
   }
