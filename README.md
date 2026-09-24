@@ -24,6 +24,23 @@ visible instead of silently showing an outdated number: a red banner at the top 
 minutes old, with the exact command to fix it; it turns green ("Stream connected")
 as soon as fresh data comes in.
 
+**Three requirements for the data to arrive** (from the official status line docs:
+`rate_limits` is only sent to Claude.ai Pro/Max subscribers, and only after the first
+API response in the session):
+
+1. the session must be the **terminal** `claude` — Claude desktop app sessions don't
+   run the status line command;
+2. that `claude` must be **logged in** with your Pro/Max account (check with
+   `claude auth status`; if `"loggedIn": false`, run `claude` then `/login`);
+3. at least **one message** must have been sent in that session.
+
+If the hook runs but one of 2–3 is missing, the banner says "Stream connected, but no
+usage data" instead of asking you to reinstall.
+
+**Test bench:** `python3 tests/bench_statusline.py` runs the automated tests in an
+isolated sandbox; `python3 tests/bench_statusline.py --diagnose` checks the real setup
+on this machine (read-only) and tells you which of the requirements above is missing.
+
 ## Setup
 
 **Quick start:** run `python3 wizard.py` from this folder. It's a bilingual (IT/EN)

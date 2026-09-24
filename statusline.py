@@ -380,7 +380,18 @@ def main():
     five_hour_resets_at = five_hour.get("resets_at")
 
     if not seven_day:
-        write_web_state({"status": "n/d", "model": model, "updated_at": time.time()})
+        # sessione senza rate_limits (CLI non loggata, o nessun messaggio ancora inviato):
+        # non deve cancellare i dati validi scritti da un'altra sessione, segnala solo
+        # che l'hook è vivo ma senza limiti, così il dashboard sa distinguere i due casi
+        now_ts = time.time()
+        prev = load_web_state()
+        if prev and prev.get("status") == "ok":
+            write_web_state({**prev, "hook_at": now_ts, "limits_missing": True})
+        else:
+            write_web_state({
+                "status": "n/d", "model": model, "updated_at": now_ts,
+                "hook_at": now_ts, "limits_missing": True,
+            })
         emit_terminal_output(f"[{model}] limite settimanale: n/d", raw_input)
         return
 
@@ -395,6 +406,8 @@ def main():
             "five_hour_pct": five_hour_pct,
             "five_hour_resets_at": five_hour_resets_at,
             "updated_at": time.time(),
+            "hook_at": time.time(),
+            "limits_missing": False,
         })
         emit_terminal_output(f"[{model}] {used_pct:.0f}% (7gg)", raw_input)
         return
@@ -460,6 +473,8 @@ def main():
         "five_hour_reset_date": five_hour_reset_str,
         "worked_slots": worked_slots,
         "updated_at": time.time(),
+        "hook_at": time.time(),
+        "limits_missing": False,
     })
 
     emit_terminal_output(bar_text, raw_input)

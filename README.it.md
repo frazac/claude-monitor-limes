@@ -26,6 +26,24 @@ vecchio: un banner rosso in cima dice "Stream non collegato" ogni volta che non 
 sono ancora dati o i dati hanno più di 20 minuti, con il comando esatto per
 sistemarlo; diventa verde ("Stream collegato") appena arrivano dati freschi.
 
+**Tre requisiti perché i dati arrivino** (dalla documentazione ufficiale della
+statusline: `rate_limits` viene inviato solo agli abbonati Claude.ai Pro/Max, e solo
+dopo la prima risposta API della sessione):
+
+1. la sessione deve essere il `claude` **da terminale** — le sessioni dell'app desktop
+   Claude non eseguono il comando della statusline;
+2. quel `claude` deve aver fatto **login** con il tuo account Pro/Max (verifica con
+   `claude auth status`; se `"loggedIn": false`, lancia `claude` e poi `/login`);
+3. nella sessione deve essere stato inviato almeno **un messaggio**.
+
+Se l'hook gira ma manca il 2 o il 3, il banner dice "Stream collegato, ma senza dati
+d'uso" invece di chiederti di reinstallare.
+
+**Banco di prova:** `python3 tests/bench_statusline.py` esegue i test automatici in
+una sandbox isolata; `python3 tests/bench_statusline.py --diagnose` controlla la
+configurazione reale di questa macchina (sola lettura) e ti dice quale dei requisiti
+sopra manca.
+
 ## Setup
 
 **Avvio rapido:** lancia `python3 wizard.py` da questa cartella. È un wrapper bilingue

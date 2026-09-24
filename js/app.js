@@ -263,7 +263,7 @@ function applyStrings() {
   document.getElementById('lbl-made-with').innerHTML = T.madeWithPrefix +
     '<a href="https://short.masterismi.com/sitoistituzionale" target="_blank" rel="noopener">masterismi.com</a>' +
     T.madeWithSuffix;
-  setStreamBanner(streamConnected);
+  setStreamBanner(streamState);
 
   document.getElementById('customize-title').textContent = T.customizeTitle;
   document.getElementById('customize-intro').textContent = T.customizeIntro;
@@ -284,18 +284,39 @@ function applyStrings() {
   document.getElementById('plan-conflict-cancel').textContent = T.planConflictCancel;
 }
 
-let streamConnected = false;
+let streamState = 'disconnected';
 let lastScriptDir = null;
-function setStreamBanner(connected) {
-  streamConnected = connected;
+let lastRaw = null; // ultimo state.json letto, anche se non "ok"
+
+// 'connected': dati freschi; 'nolimits': l'hook viene chiamato ma Claude Code non
+// manda rate_limits (CLI non loggata / nessun messaggio inviato); 'disconnected':
+// nessuna chiamata all'hook da più di STALE_THRESHOLD_MS
+function computeStreamState() {
+  const d = lastRaw;
+  if (!d) return 'disconnected';
+  const now = Date.now();
+  const hookAt = (d.hook_at || d.updated_at || 0) * 1000;
+  if (d.status === 'ok' && now - d.updated_at * 1000 <= STALE_THRESHOLD_MS) return 'connected';
+  if (now - hookAt <= STALE_THRESHOLD_MS) return 'nolimits';
+  return 'disconnected';
+}
+
+function setStreamBanner(state) {
+  streamState = state;
   const banner = document.getElementById('stream-banner');
-  banner.classList.toggle('connected', connected);
-  banner.classList.toggle('disconnected', !connected);
-  document.getElementById('stream-banner-title').textContent = connected ? T.streamConnected : T.streamDisconnected;
+  banner.classList.toggle('connected', state === 'connected');
+  banner.classList.toggle('disconnected', state !== 'connected');
+  const title = { connected: T.streamConnected, nolimits: T.streamNoLimits, disconnected: T.streamDisconnected }[state];
+  document.getElementById('stream-banner-title').textContent = title;
+  const body = document.getElementById('stream-banner-cmd');
+  if (state === 'nolimits') {
+    body.innerHTML = T.streamNoLimitsHint;
+    return;
+  }
   const cmd = lastScriptDir
     ? "cd '" + lastScriptDir + "' && python3 install-statusline.py"
     : 'python3 install-statusline.py';
-  document.getElementById('stream-banner-cmd').innerHTML = T.streamDisconnectedHint + '<br><code>' + escapeHTML(cmd) + '</code>' +
+  body.innerHTML = T.streamDisconnectedHint + '<br><code>' + escapeHTML(cmd) + '</code>' +
     '<br>' + T.streamDisconnectedAlreadyWired;
 }
 
@@ -1011,7 +1032,7 @@ function hourLabel(h) {
 
 function updateTimeDisplays() {
   if (!lastData || lastData.status !== 'ok') {
-    setStreamBanner(false);
+    setStreamBanner(computeStreamState());
     return;
   }
   const now = Date.now();
@@ -1037,7 +1058,7 @@ function updateTimeDisplays() {
     (isStale ? T.staleDataPrefix + formatDuration(staleMs) + ' — ' : T.updatedPrefix) + formatTime(updatedAtDate),
     isStale
   );
-  setStreamBanner(!isStale);
+  setStreamBanner(computeStreamState());
 }
 
 function renderTzOptions() {
@@ -1079,12 +1100,13 @@ function setUpdatedMessage(text, isError) {
 }
 
 function render(data) {
+  lastRaw = data;
   if (data && data.script_dir) lastScriptDir = data.script_dir;
   if (!data || data.status !== 'ok') {
     document.getElementById('week-pct').textContent = '--%';
     document.getElementById('hour-pct').textContent = '--%';
     setUpdatedMessage(data && data.status === 'n/d' ? T.noApiResponse : T.waitingData, data && data.status === 'n/d');
-    setStreamBanner(false);
+    setStreamBanner(computeStreamState());
     return;
   }
   lastData = data;
@@ -1122,12 +1144,14 @@ async function poll() {
     if (res.ok) {
       render(await res.json());
     } else {
+      lastRaw = null;
       setUpdatedMessage(T.stateNotFound, true);
-      setStreamBanner(false);
+      setStreamBanner('disconnected');
     }
   } catch (e) {
+    lastRaw = null;
     setUpdatedMessage(T.stateNotFound, true);
-    setStreamBanner(false);
+    setStreamBanner('disconnected');
   }
 }
 
