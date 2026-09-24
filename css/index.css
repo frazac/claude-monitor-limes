@@ -204,15 +204,35 @@
 .stream-banner.connected { color: var(--under); border-color: var(--under); }
 .stream-banner-title { font-weight: 600; }
 .stream-banner-cmd { margin-top: 0.4rem; opacity: 0.9; }
-.stream-banner-cmd code {
-  font-family: inherit;
+.stream-banner-cmd p { margin: 0.4rem 0 0 0; line-height: 1.9; }
+.copyable {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
   background: var(--tile-fill);
   color: var(--fg);
-  padding: 0.15rem 0.4rem;
   border-radius: 4px;
-  display: inline-block;
-  margin-top: 0.2rem;
+  padding: 0 0.1rem 0 0.4rem;
+  vertical-align: middle;
+  max-width: 100%;
 }
+.copyable code { font-family: inherit; overflow-wrap: anywhere; }
+.copy-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.copy-btn:hover { background: color-mix(in srgb, var(--fg) 10%, transparent); }
+.copy-btn svg { width: 14px; height: 14px; display: block; }
 .stream-banner.connected .stream-banner-cmd { display: none; }
 
 /* piano corrente/nominato non salvato per la config fasce attiva, vedi
