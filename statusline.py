@@ -7,10 +7,6 @@ import subprocess
 import sys
 import time
 
-SEGMENTS = 6  # 5 giorni lavorativi standard + 1 extra, domenica esclusa
-DAILY_QUOTA_PCT = 100 / SEGMENTS  # quota fissa di budget settimanale per giorno (~17%)
-WEEKDAY_LETTERS = ["L", "M", "M", "G", "V", "S", "D"]  # date.weekday(): 0=lunedì ... 6=domenica
-
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 WEB_STATE_FILE = os.path.join(SCRIPT_DIR, "data", "state.json")
 WORKED_CACHE_FILE = os.path.join(SCRIPT_DIR, "data", "worked_cache.json")
@@ -19,6 +15,10 @@ SLOT_CONFIG_FILE = os.path.join(SCRIPT_DIR, "data", "slot-config.json")
 CLAUDE_PROJECTS_DIR = os.path.expanduser("~/.claude/projects")
 WORK_THRESHOLD_MINUTES = 15  # minuti distinti di attività per considerare uno slot "lavorato"
 WORKED_CACHE_TTL = 60  # secondi: non ri-scansionare i log più spesso di così
+# tempo massimo di lettura dei log per chiamata: a inizio settimana la prima scansione
+# completa può durare secondi, e Claude Code interrompe la statusline prima che finisca;
+# così ogni chiamata legge una parte, salva gli offset e la successiva riprende da lì
+WORKED_SCAN_BUDGET_S = 0.5
 
 
 def load_slot_config():
@@ -59,40 +59,18 @@ else:
 
 TICK_FULL = "█"
 TICK_EMPTY = "░"
-RED = "\033[31m"
-GREEN = "\033[32m"
 CYAN = "\033[36m"
 RESET = "\033[0m"
 
 
-MORNING_THRESHOLD_HOUR = 11  # reset entro quest'ora: il giorno di window_start conta per intero come giorno 1
-
-def calendar_segments(window_start_epoch):
-    """Le 6 date della finestra di 7gg che non cadono di domenica, in ordine cronologico.
-
-    window_start è l'istante esatto in cui la finestra precedente è scaduta. Se quell'istante
-    cade tardi nel giorno (es. mercoledì 23:00), la fetta di giorno rimasta (dalle 23 a
-    mezzanotte) è trascurabile e non conta come tacca: il giorno 1 diventa il giorno
-    successivo. Se invece cade la mattina presto (es. entro le 11), la maggior parte di
-    quel giorno è già dentro la finestra corrente, quindi conta per intero come giorno 1.
-    """
-    window_start_dt = datetime.datetime.fromtimestamp(window_start_epoch)
-    if window_start_dt.hour < MORNING_THRESHOLD_HOUR:
-        start_date = window_start_dt.date()
-    else:
-        start_date = window_start_dt.date() + datetime.timedelta(days=1)
-    days = []
-    for offset in range(7):
-        d = start_date + datetime.timedelta(days=offset)
-        if d.weekday() == 6:  # domenica: giorno di riposo, non è una tacca
-            continue
-        days.append(d)
-    return days
+# reset entro quest'ora: il giorno di window_start conta per intero come giorno 1;
+# più tardi (es. mercoledì 23:00) il giorno 1 diventa il giorno successivo
+MORNING_THRESHOLD_HOUR = 11
 
 
 def all_seven_days(window_start_epoch):
-    """Tutti e 7 i giorni della finestra (domenica inclusa), stesso algoritmo usato lato web
-    per il calendario di pianificazione (vedi computeSevenDays in index.html)."""
+    """I 7 giorni della finestra, stesso algoritmo usato lato web per il calendario di
+    pianificazione (computeDisplayDays in js/app.js)."""
     window_start_dt = datetime.datetime.fromtimestamp(window_start_epoch)
     if window_start_dt.hour < MORNING_THRESHOLD_HOUR:
         start_date = window_start_dt.date()
@@ -141,6 +119,11 @@ def save_worked_cache(cache):
         pass  # cache best-effort, non deve mai rompere la statusline
 
 
+def cached_worked_slots(window_start_epoch):
+    cache = load_worked_cache()
+    return cache["worked"] if cache.get("last_window_start") == window_start_epoch else {}
+
+
 def compute_worked_slots(window_start_epoch, resets_at_epoch):
     """Legge in modo incrementale le sessioni Claude Code (~/.claude/projects/*/*.jsonl) e
     determina quali slot (giorno+fascia) hanno più di WORK_THRESHOLD_MINUTES minuti distinti
@@ -169,8 +152,14 @@ def compute_worked_slots(window_start_epoch, resets_at_epoch):
         pattern = os.path.join(CLAUDE_PROJECTS_DIR, "*", "*.jsonl")
         paths = glob.glob(pattern)
 
+        deadline = time.time() + WORKED_SCAN_BUDGET_S
+        complete = True
+        files_read = 0  # almeno un file per chiamata, così la scansione avanza sempre
         seen_paths = set()
         for path in paths:
+            if files_read and time.time() > deadline:
+                complete = False
+                break
             try:
                 mtime = os.path.getmtime(path)
             except OSError:
@@ -188,6 +177,8 @@ def compute_worked_slots(window_start_epoch, resets_at_epoch):
                     f.seek(start_offset)
                     new_data = f.read()
                 offsets[path] = size
+                if new_data:
+                    files_read += 1
             except OSError:
                 continue
 
@@ -217,16 +208,17 @@ def compute_worked_slots(window_start_epoch, resets_at_epoch):
                 key = d_str + ":" + slot
                 minutes.setdefault(key, set()).add(dt_local.hour * 60 + dt_local.minute)
 
-        for path in list(offsets.keys()):
-            if path not in seen_paths:
-                del offsets[path]
+        if complete:  # a scansione interrotta i file non visti sono solo ancora da leggere
+            for path in list(offsets.keys()):
+                if path not in seen_paths:
+                    del offsets[path]
 
         worked = {key: True for key, mins in minutes.items() if len(mins) > WORK_THRESHOLD_MINUTES}
 
         cache["offsets"] = offsets
         cache["minutes"] = {k: sorted(v) for k, v in minutes.items()}
         cache["worked"] = worked
-        cache["last_update"] = now
+        cache["last_update"] = now if complete else 0  # incompleta: riprende alla prossima chiamata
         cache["last_window_start"] = window_start_epoch
         save_worked_cache(cache)
         return worked
@@ -234,15 +226,9 @@ def compute_worked_slots(window_start_epoch, resets_at_epoch):
         return {}  # i log di lavoro sono un extra, non devono mai rompere la statusline
 
 
-def build_bar(used_pct, current_index):
-    filled = round(used_pct / 100 * SEGMENTS)
-    filled = max(0, min(SEGMENTS, filled))
-    chars = []
-    for i in range(1, SEGMENTS + 1):
-        char = TICK_FULL if i <= filled else TICK_EMPTY
-        char = f"[{char}]" if i == current_index else f" {char} "
-        chars.append(char)
-    return "".join(chars)
+def build_bar(used_pct, width=10):
+    filled = max(0, min(width, round(used_pct / 100 * width)))
+    return TICK_FULL * filled + TICK_EMPTY * (width - filled)
 
 
 DEBUG_LOG_FILE = os.path.join(SCRIPT_DIR, "data", "debug-writes.log")
@@ -413,16 +399,6 @@ def main():
         return
 
     window_start = resets_at - 7 * 86400
-    days = calendar_segments(window_start)  # 6 date, domenica esclusa
-    today = datetime.date.today()
-
-    current_index = None
-    for i, d in enumerate(days, start=1):
-        if d == today:
-            current_index = i
-            break
-
-    day_labels = [WEEKDAY_LETTERS[d.weekday()] for d in days]
 
     reset_date_str = time.strftime("%d/%m/%Y %H:%M", time.localtime(resets_at))
     five_hour_reset_str = (
@@ -430,52 +406,50 @@ def main():
     )
     used_pct, five_hour_pct = clamp_non_decreasing(used_pct, five_hour_pct, reset_date_str, five_hour_reset_str)
 
-    bar = build_bar(used_pct, current_index)
-
-    target_pct = (current_index or 0) * DAILY_QUOTA_PCT
-    over_pace = current_index is not None and used_pct > target_pct
-    color = RED if over_pace else GREEN
-    pace_msg = (
-        f" ⚠ sopra limite (obiettivo oggi {target_pct:.0f}%)" if over_pace
-        else f" ✓ sotto limite (obiettivo oggi {target_pct:.0f}%)" if current_index is not None
-        else ""
-    )
-
-    now = datetime.datetime.now()
-    day_fraction = (now.hour * 3600 + now.minute * 60 + now.second) / 86400
-
     five_hour_line = (
         f" · 5h {five_hour_pct:.0f}% (reset {five_hour_reset_str})"
         if five_hour_pct is not None and five_hour_reset_str
         else ""
     )
 
-    tacca_str = f"tacca {current_index}/{SEGMENTS}" if current_index else "oggi è riposo (domenica)"
-
-    worked_slots = compute_worked_slots(window_start, resets_at)
-
+    # solo percentuali grezze: obiettivi e soglie dipendono dal piano, che vive nel
+    # browser (localStorage) e non è leggibile da qui — li mostra solo la dashboard
     bar_text = (
-        f"{CYAN}[{model}]{RESET} {bar} "
-        f"{color}{used_pct:.0f}%{RESET} "
-        f"({tacca_str}, quota {DAILY_QUOTA_PCT:.0f}%/g, reset {reset_date_str}){pace_msg}{five_hour_line}"
+        f"{CYAN}[{model}]{RESET} {build_bar(used_pct)} {used_pct:.0f}% "
+        f"(7gg, reset {reset_date_str}){five_hour_line}"
     )
 
-    write_web_state({
-        # nota: day_labels/segments/current_index/daily_quota_pct/over_pace/day_fraction
-        # servivano alla vecchia barra a tacche settimanale, sostituita dal calendario di
-        # pianificazione: non sono più letti dal frontend, tenuti solo per l'output terminale.
+    # le percentuali si scrivono subito, con gli slot lavorati già in cache: la
+    # lettura dei log viene dopo, così anche se Claude Code interrompe lo script
+    # la dashboard ha già i dati nuovi
+    now_ts = time.time()
+    # una sessione claude ferma ripete l'ultimo snapshot ricevuto (verificato il
+    # 6/10/2026): updated_at avanza comunque, quindi serve sapere da quando i
+    # valori non cambiano per avvisare che potrebbero essere vecchi
+    prev = load_web_state() or {}
+    same_values = (
+        prev.get("status") == "ok"
+        and (prev.get("used_pct"), prev.get("five_hour_pct"), prev.get("reset_date"), prev.get("five_hour_reset_date"))
+        == (used_pct, five_hour_pct, reset_date_str, five_hour_reset_str)
+    )
+    state = {
         "status": "ok",
         "model": model,
         "used_pct": used_pct,
-        "target_pct": target_pct,
         "reset_date": reset_date_str,
         "five_hour_pct": five_hour_pct,
         "five_hour_reset_date": five_hour_reset_str,
-        "worked_slots": worked_slots,
-        "updated_at": time.time(),
-        "hook_at": time.time(),
+        "values_changed_at": prev.get("values_changed_at", now_ts) if same_values else now_ts,
+        "worked_slots": cached_worked_slots(window_start),
+        "updated_at": now_ts,
+        "hook_at": now_ts,
         "limits_missing": False,
-    })
+    }
+    write_web_state(state)
+
+    worked_slots = compute_worked_slots(window_start, resets_at)
+    if worked_slots != state["worked_slots"]:
+        write_web_state({**state, "worked_slots": worked_slots})
 
     emit_terminal_output(bar_text, raw_input)
 

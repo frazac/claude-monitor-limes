@@ -37,6 +37,13 @@ API response in the session):
 If the hook runs but one of 2–3 is missing, the banner says "Stream connected, but no
 usage data" instead of asking you to reinstall.
 
+**An idle session doesn't refresh on its own.** Claude Code receives the limits with
+API responses: an open `claude` session you don't type in keeps repeating the last value
+it got (verified: after 14 minutes of work in the desktop app an idle session still
+said 26%/21%, a fresh one 27%/29%). If you work in the desktop app, send a message in the
+terminal session now and then; the dashboard warns you when the percentages haven't
+changed for more than 30 minutes.
+
 **Test bench:** `python3 tests/bench_statusline.py` runs the automated tests in an
 isolated sandbox; `python3 tests/bench_statusline.py --diagnose` checks the real setup
 on this machine (read-only) and tells you which of the requirements above is missing.

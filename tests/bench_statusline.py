@@ -65,6 +65,33 @@ class Sandbox:
     def cleanup(self):
         shutil.rmtree(self.root, ignore_errors=True)
 
+    def load_module(self):
+        """statusline.py importato in questo processo, con HOME fittizio (i path sono
+        risolti all'import), per test che devono sostituirne funzioni o costanti."""
+        import importlib.util
+        old_home = os.environ.get("HOME")
+        os.environ["HOME"] = self.home
+        try:
+            spec = importlib.util.spec_from_file_location(
+                "statusline_" + os.path.basename(self.root), os.path.join(self.repo, "statusline.py"))
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+        finally:
+            os.environ["HOME"] = old_home
+        return mod
+
+    def fake_session_logs(self, window_start, files=12):
+        """Un file .jsonl per giorno/fascia, ciascuno con 20 minuti distinti di attività."""
+        proj = os.path.join(self.home, ".claude", "projects", "bench")
+        os.makedirs(proj, exist_ok=True)
+        day0 = datetime.datetime.fromtimestamp(window_start).replace(hour=0, minute=0, second=0, microsecond=0)
+        for i in range(files):
+            start = day0 + datetime.timedelta(days=1 + i // 3, hours=(8, 14, 20)[i % 3])
+            with open(os.path.join(proj, f"s{i}.jsonl"), "w") as f:
+                for m in range(20):
+                    ts = (start + datetime.timedelta(minutes=m)).astimezone(datetime.timezone.utc)
+                    f.write(json.dumps({"type": "assistant", "timestamp": ts.strftime("%Y-%m-%dT%H:%M:%S.000Z")}) + "\n")
+
 
 class StatuslineBench(unittest.TestCase):
     def setUp(self):
@@ -93,6 +120,15 @@ class StatuslineBench(unittest.TestCase):
         self.assertIn("hook_at", s)
         self.assertIn("47%", r.stdout)
 
+    def test_terminal_bar_shows_raw_percentages_only(self):
+        # il piano vive nel browser: la barra del terminale non deve inventarsi obiettivi
+        r = self.sb.run(self.full(week=50.0, hour=12.0))
+        self.assertIn("█████░░░░░ 50%", r.stdout)
+        self.assertIn("5h 12%", r.stdout)
+        for stale in ("obiettivo", "tacca", "quota", "limite"):
+            self.assertNotIn(stale, r.stdout)
+        self.assertNotIn("target_pct", self.sb.state())
+
     def test_missing_rate_limits_on_empty_state_is_nd(self):
         self.sb.run(payload())
         s = self.sb.state()
@@ -115,6 +151,16 @@ class StatuslineBench(unittest.TestCase):
         # e appena torna una sessione con i limiti, il flag si spegne
         self.sb.run(self.full(week=64.0, session="logged-in"))
         self.assertFalse(self.sb.state()["limits_missing"])
+
+    def test_values_changed_at_tracks_real_changes_only(self):
+        # una sessione ferma ripete lo stesso snapshot: values_changed_at non deve avanzare
+        self.sb.run(self.full(week=26.0, hour=21.0))
+        first = self.sb.state()["values_changed_at"]
+        time.sleep(0.05)
+        self.sb.run(self.full(week=26.0, hour=21.0))
+        self.assertEqual(self.sb.state()["values_changed_at"], first)
+        self.sb.run(self.full(week=27.0, hour=29.0))
+        self.assertGreater(self.sb.state()["values_changed_at"], first)
 
     def test_clamp_same_window_never_decreases(self):
         self.sb.run(self.full(week=94.0))
@@ -149,6 +195,51 @@ class StatuslineBench(unittest.TestCase):
         self.sb.write("display-config.json", {"mode": "passthrough", "original_command": "comando-inesistente-xyz"})
         r = self.sb.run(self.full())
         self.assertIn("47%", r.stdout)
+
+    def test_interrupted_scans_converge_to_full_scan(self):
+        # a inizio settimana la scansione dei log è lunga: a pezzi deve arrivare allo
+        # stesso risultato di una scansione completa, senza ripartire da zero
+        resets = self.week_reset
+        window_start = resets - 7 * 86400
+        self.sb.fake_session_logs(window_start)
+        full = Sandbox()
+        try:
+            full.fake_session_logs(window_start)
+            expected = full.load_module().compute_worked_slots(window_start, resets)
+        finally:
+            full.cleanup()
+        self.assertEqual(len(expected), 12)
+
+        sl = self.sb.load_module()
+        sl.WORKED_SCAN_BUDGET_S = 0  # un solo file per chiamata
+        calls = 0
+        while True:
+            calls += 1
+            got = sl.compute_worked_slots(window_start, resets)
+            if sl.load_worked_cache()["last_update"]:
+                break
+            self.assertLess(calls, 50)
+        self.assertGreater(calls, 1)
+        self.assertEqual(got, expected)
+
+    def test_percentages_written_even_if_log_scan_is_killed(self):
+        # il baco del 6/10: Claude Code interrompeva lo script durante la lettura dei
+        # log e state.json restava alla settimana precedente per minuti
+        import io
+        sl = self.sb.load_module()
+
+        def killed(*a):
+            raise SystemExit("interrotto da Claude Code")
+        sl.compute_worked_slots = killed
+        old_stdin = sys.stdin
+        sys.stdin = io.StringIO(json.dumps(self.full(week=26.0, hour=21.0)))
+        try:
+            with self.assertRaises(SystemExit):
+                sl.main()
+        finally:
+            sys.stdin = old_stdin
+        s = self.sb.state()
+        self.assertEqual((s["status"], s["used_pct"], s["five_hour_pct"]), ("ok", 26.0, 21.0))
 
     def test_debug_log_records_missing_key(self):
         self.sb.run(payload())

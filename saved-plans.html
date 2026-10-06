@@ -12,9 +12,12 @@
   <h1 id="title">Tutti i salvataggi</h1>
   <div class="tagline" id="tagline"></div>
 
+  <div class="plans-toolbar">
+    <button type="button" class="delete-all" id="delete-all" hidden></button>
+  </div>
   <table>
     <thead>
-      <tr><th id="col-name">Nome</th><th id="col-saved-at">Salvato il</th></tr>
+      <tr><th id="col-name">Nome</th><th id="col-saved-at">Salvato il</th><th class="col-actions"></th></tr>
     </thead>
     <tbody id="plans-tbody"></tbody>
   </table>

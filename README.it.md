@@ -39,6 +39,13 @@ dopo la prima risposta API della sessione):
 Se l'hook gira ma manca il 2 o il 3, il banner dice "Stream collegato, ma senza dati
 d'uso" invece di chiederti di reinstallare.
 
+**Una sessione ferma non si aggiorna da sola.** Claude Code riceve i limiti con le
+risposte dell'API: una sessione `claude` aperta in cui non scrivi continua a ripetere
+l'ultimo valore ricevuto (verificato: dopo 14 minuti di lavoro nell'app desktop una
+sessione ferma diceva ancora 26%/21%, una sessione nuova 27%/29%). Se lavori nell'app
+desktop, manda ogni tanto un messaggio nella sessione del terminale; la dashboard ti
+avvisa quando le percentuali sono ferme da più di 30 minuti.
+
 **Banco di prova:** `python3 tests/bench_statusline.py` esegue i test automatici in
 una sandbox isolata; `python3 tests/bench_statusline.py --diagnose` controlla la
 configurazione reale di questa macchina (sola lettura) e ti dice quale dei requisiti

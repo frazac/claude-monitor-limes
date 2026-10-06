@@ -139,6 +139,7 @@ let T = STRINGS[LOCALE];
 
 const POLL_MS = 5000;
 const STALE_THRESHOLD_MS = 20 * 60 * 1000; // dati più vecchi di 20 min: statusline.py scrive solo con una sessione Claude Code interattiva attiva
+const VALUES_STILL_HINT_MS = 30 * 60 * 1000; // percentuali invariate da più di così: suggerisci di scrivere nel terminale
 const PLAN_KEY = 'claude-monitor-plan';
 const PLAN_SLOT_SIGNATURE_KEY = 'claude-monitor-plan-slot-signature'; // config fasce sotto cui PLAN_KEY è stato scritto, vedi currentSlotSignature()
 const NAMED_PLANS_KEY = 'claude-monitor-named-plans';
@@ -215,17 +216,19 @@ function savePlanSlotSignature(sig) {
   localStorage.setItem(PLAN_SLOT_SIGNATURE_KEY, JSON.stringify(sig));
 }
 
+// etichetta di un confine tra fasce: sul preset di default nome + orario
+// ("Sveglia 00:00"), così si vede che il primo slot parte da mezzanotte e
+// l'asticella dell'ora non sembra "in anticipo"; su una configurazione
+// personalizzata, dove i nomi fissi non hanno senso, solo l'orario
+function boundaryCaption(i) {
+  const hour = hourLabel(currentBoundaryHours()[i]);
+  return usingDefaultSlotPreset && T.boundaryLabels[i] ? T.boundaryLabels[i] + ' ' + hour : hour;
+}
+
 function buildExplanationHTML() {
-  const boundaryHours = currentBoundaryHours();
-  // sul preset di default le 4 icone hanno un'etichetta testuale fissa
-  // (sveglia/pranzo/cena/a nanna); su una configurazione personalizzata,
-  // dove le etichette fisse non hanno più senso per un numero qualunque di
-  // confini, si mostra l'orario del confine al loro posto — autoesplicativo,
-  // nessuna nuova chiave i18n necessaria.
-  const boundaryLine = BOUNDARY_ICON_KEYS.map((iconKey, i) => {
-    const caption = usingDefaultSlotPreset ? (T.boundaryLabels[i] || '') : hourLabel(boundaryHours[i]);
-    return caption + ' <span class="inline-icon">' + ICONS[iconKey] + '</span>';
-  }).join(' · ');
+  const boundaryLine = BOUNDARY_ICON_KEYS.map((iconKey, i) =>
+    boundaryCaption(i) + ' <span class="inline-icon">' + ICONS[iconKey] + '</span>'
+  ).join(' · ');
   return '<p>' + T.explanation + '</p>' +
     '<p>' + T.boundaryIntro + ' ' + boundaryLine + '.</p>' +
     '<p>' + T.planSaved + ' (<a href="cookies.html">' + T.planSavedDetails + '</a>)' + T.planSavedRest + '</p>';
@@ -308,6 +311,15 @@ function setStreamBanner(state) {
   banner.classList.toggle('disconnected', state !== 'connected');
   const title = { connected: T.streamConnected, nolimits: T.streamNoLimits, disconnected: T.streamDisconnected }[state];
   document.getElementById('stream-banner-title').textContent = title;
+  // collegato, ma percentuali ferme da tempo: probabilmente la sessione claude del
+  // terminale è inattiva e ripete l'ultimo snapshot (si lavora nell'app desktop)
+  const hint = document.getElementById('stream-banner-hint');
+  const changedAt = lastRaw && lastRaw.values_changed_at;
+  const stillMs = changedAt ? Date.now() - changedAt * 1000 : 0;
+  hint.hidden = !(state === 'connected' && stillMs > VALUES_STILL_HINT_MS);
+  if (!hint.hidden) {
+    hint.innerHTML = T.streamStillPrefix + formatDuration(stillMs) + T.streamStillSuffix;
+  }
   const cmd = lastScriptDir
     ? "cd '" + lastScriptDir + "' && python3 install-statusline.py"
     : 'python3 install-statusline.py';
@@ -599,6 +611,7 @@ function renderPlan() {
     const icon = document.createElement('div');
     icon.className = 'axis-icon';
     icon.innerHTML = ICONS[key];
+    icon.title = boundaryCaption(i);
     icon.style.gridColumn = '1'; // esplicito: l'ultima icona condivide la riga della penultima
     // (entrambe ai due bordi dell'ultima fascia), senza questo l'auto-placement le
     // metterebbe in colonne diverse pensando che si sovrappongano
@@ -626,7 +639,8 @@ function renderPlan() {
       cell.style.gridRow = String(row + 2);
       const num = numbering.get(dayIdx + ':' + slot.key);
       cell.textContent = slot.active ? String(num) : '–';
-      cell.title = (slot.active ? T.deactivate : T.activate);
+      const bounds = SLOT_BOUNDS[slot.key];
+      cell.title = hourLabel(bounds.start) + '–' + hourLabel(bounds.end) + ' · ' + (slot.active ? T.deactivate : T.activate);
 
       cell.addEventListener('click', () => {
         slot.active = !slot.active;
@@ -1176,18 +1190,30 @@ function render(data) {
 // calendario venga ricostruito sotto di te ogni pochi secondi
 window.DEBUG_PAUSE_REFRESH = false;
 
-async function poll() {
-  if (window.DEBUG_PAUSE_REFRESH) return;
+let lastStateText = null;
+
+async function poll(force = false) {
+  // scheda in background: niente fetch né ricostruzioni del DOM, si riprende al
+  // ritorno (il primo caricamento avviene comunque, con force)
+  if (window.DEBUG_PAUSE_REFRESH || (document.hidden && !force)) return;
   try {
-    const res = await fetch('data/state.json?_=' + Date.now(), { cache: 'no-store' });
+    const res = await fetch('data/state.json', { cache: 'no-store' });
     if (res.ok) {
-      render(await res.json());
+      const text = await res.text();
+      if (text === lastStateText) {
+        updateTimeDisplays(); // dati identici: basta aggiornare età dei dati e banner
+        return;
+      }
+      lastStateText = text;
+      render(JSON.parse(text));
     } else {
+      lastStateText = null;
       lastRaw = null;
       setUpdatedMessage(T.stateNotFound, true);
       setStreamBanner('disconnected');
     }
   } catch (e) {
+    lastStateText = null;
     lastRaw = null;
     setUpdatedMessage(T.stateNotFound, true);
     setStreamBanner('disconnected');
@@ -1206,7 +1232,12 @@ async function poll() {
   setupTzControls();
   setupConsentBanner();
   setupLangSwitch();
-  poll();
-  setInterval(poll, POLL_MS);
-  setInterval(() => { if (!window.DEBUG_PAUSE_REFRESH) renderPlan(); }, 30000); // aggiorna la posizione dell'asticella anche senza nuovi dati
+  poll(true);
+  setInterval(() => poll(), POLL_MS);
+  setInterval(() => { if (!window.DEBUG_PAUSE_REFRESH && !document.hidden) renderPlan(); }, 30000); // aggiorna la posizione dell'asticella anche senza nuovi dati
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden || window.DEBUG_PAUSE_REFRESH) return;
+    poll();
+    renderPlan();
+  });
 })();

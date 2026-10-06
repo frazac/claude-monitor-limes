@@ -1,6 +1,7 @@
 // pagina "tutti i salvataggi": legge i piani nominati salvati in localStorage
 // (stessa chiave usata da js/app.js) e li mostra in una tabella con dettaglio
-// ad accordion per riga. Pagina a sé stante, nessun poll/stato live: solo lettura.
+// ad accordion per riga, con cancellazione singola o totale (con conferma).
+// Pagina a sé stante, nessun poll/stato live.
 const LANG_KEY = 'claude-monitor-lang';
 function detectLocale() {
   return (navigator.language || 'en').toLowerCase().startsWith('it') ? 'it' : 'en';
@@ -85,6 +86,27 @@ function buildDetailHTML(entry) {
   return '<div class="detail-days">' + rows + '</div>';
 }
 
+const TRASH_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 11v6"/><path d="M14 11v6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>';
+
+function saveNamedPlans(named) {
+  localStorage.setItem(NAMED_PLANS_KEY, JSON.stringify(named));
+}
+
+function deletePlan(name) {
+  if (!confirm(T.savedPlansDeleteConfirm.replace('{name}', name))) return;
+  const named = loadNamedPlans();
+  delete named[name];
+  saveNamedPlans(named);
+  renderTable();
+}
+
+function deleteAllPlans() {
+  const count = Object.keys(loadNamedPlans()).length;
+  if (!confirm(T.savedPlansDeleteAllConfirm.replace('{count}', count))) return;
+  localStorage.removeItem(NAMED_PLANS_KEY);
+  renderTable();
+}
+
 function init() {
   applyTheme();
   document.documentElement.lang = LOCALE;
@@ -93,18 +115,23 @@ function init() {
   document.getElementById('tagline').textContent = T.savedPlansTagline;
   document.getElementById('col-name').textContent = T.savedPlansColName;
   document.getElementById('col-saved-at').textContent = T.savedPlansColSavedAt;
+  const deleteAll = document.getElementById('delete-all');
+  deleteAll.textContent = T.savedPlansDeleteAll;
+  deleteAll.addEventListener('click', deleteAllPlans);
+  renderTable();
+}
 
+function renderTable() {
   const named = loadNamedPlans();
   const names = Object.keys(named);
   const tbody = document.getElementById('plans-tbody');
   const empty = document.getElementById('plans-empty');
+  tbody.innerHTML = '';
   empty.textContent = T.savedPlansEmpty;
-
-  if (!names.length) {
-    empty.hidden = false;
-    return;
-  }
-  empty.hidden = true;
+  empty.hidden = names.length > 0;
+  document.getElementById('delete-all').hidden = names.length === 0;
+  document.querySelector('table').hidden = names.length === 0;
+  if (!names.length) return;
 
   // più recenti prima; i piani legacy senza data di salvataggio vanno in coda, per nome
   names.sort((a, b) => {
@@ -123,14 +150,20 @@ function init() {
     const row = document.createElement('tr');
     row.className = 'plan-row';
     row.innerHTML = '<td>' + escapeHTML(name) + (name === lastName ? ' <span class="badge">' + T.savedPlansLastBadge + '</span>' : '') + '</td>' +
-      '<td>' + formatSavedAt(savedAt) + '</td>';
+      '<td>' + formatSavedAt(savedAt) + '</td>' +
+      '<td class="col-actions"><button type="button" class="delete-btn" title="' + escapeHTML(T.savedPlansDelete) +
+      '" aria-label="' + escapeHTML(T.savedPlansDelete + ': ' + name) + '">' + TRASH_ICON + '</button></td>';
+    row.querySelector('.delete-btn').addEventListener('click', e => {
+      e.stopPropagation(); // non aprire l'accordion della riga
+      deletePlan(name);
+    });
     tbody.appendChild(row);
 
     const detailRow = document.createElement('tr');
     detailRow.className = 'plan-detail-row';
     detailRow.hidden = true;
     const detailCell = document.createElement('td');
-    detailCell.colSpan = 2;
+    detailCell.colSpan = 3;
     detailCell.innerHTML = buildDetailHTML(entry);
     detailRow.appendChild(detailCell);
     tbody.appendChild(detailRow);
