@@ -15,7 +15,9 @@ function applyTheme() {
   if (stored) document.documentElement.setAttribute('data-theme', stored);
 }
 
-const NAMED_PLANS_KEY = 'claude-monitor-named-plans';
+// stessa logica di js/app.js: la demo ha i suoi piani, separati da quelli veri
+const DEMO = new URLSearchParams(location.search).has('demo') || location.hostname.endsWith('github.io');
+const NAMED_PLANS_KEY = (DEMO ? 'claude-monitor-demo' : 'claude-monitor') + '-named-plans';
 
 function loadNamedPlans() {
   try {

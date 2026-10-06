@@ -5,14 +5,30 @@
 A small local dashboard that tracks your Claude Code usage against Anthropic's weekly
 and 5-hour rate limits, and lets you plan your work slots around them.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/demo-en-dark.gif">
+  <img alt="The dashboard: session and week usage, the thresholds, and a weekly calendar of work slots that renumbers itself at each click" src="docs/demo-en-light.gif" width="648">
+</picture>
+
+**Try it without installing anything:** [live demo with sample data](https://frazac.github.io/claude-monitor-limes/).
+On your own copy, add `?demo` to the address (e.g. `http://127.0.0.1:8931/index.html?demo`).
+
+- **Session and week usage**, with the exact time left to each reset.
+- **A weekly calendar of work slots**: plan when you'll use Claude, and the dashboard tells
+  you whether you're above or below the share you planned so far.
+- **The slots you actually worked**, read from your local Claude Code logs.
+- **Everything stays on your machine**: no account, no server, nothing sent anywhere.
+
+It needs a Claude Pro or Max plan and Claude Code running in a terminal: see below.
+
 ## How it works
 
 Claude Code exposes rate-limit usage (`five_hour` / `seven_day` percentages) only
 through its **statusline hook** — there is no separate API or CLI command to query it
 on demand. `statusline.py` is designed to be that hook: every time Claude Code
 re-renders its statusline (on a new response, on session start, or every
-`refreshInterval` seconds while idle), it receives the current rate-limit data on
-stdin, prints a compact status line for the terminal, and writes a snapshot to
+`refreshInterval` seconds while idle), it receives the latest rate-limit data that
+session got from the API on stdin, prints a compact status line for the terminal, and writes a snapshot to
 `data/state.json`. The web dashboard (`index.html`) just reads that file and displays
 it — it never talks to Claude Code or Anthropic directly.
 

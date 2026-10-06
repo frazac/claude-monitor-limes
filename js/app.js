@@ -1,3 +1,4 @@
+const URL_PARAMS = new URLSearchParams(location.search);
 const LANG_KEY = 'claude-monitor-lang';
 function detectLocale() {
   return (navigator.language || 'en').toLowerCase().startsWith('it') ? 'it' : 'en';
@@ -114,6 +115,7 @@ function isValidBoundaries(b) {
 // pattern di data/display-config.json per la scelta della statusline): in sua
 // assenza si resta sul preset di default sopra, invariato.
 async function loadSlotConfig() {
+  if (DEMO) return; // la demo usa sempre il preset di default
   try {
     const res = await fetch('data/slot-config.json?_=' + Date.now(), { cache: 'no-store' });
     if (!res.ok) return;
@@ -140,9 +142,14 @@ let T = STRINGS[LOCALE];
 const POLL_MS = 5000;
 const STALE_THRESHOLD_MS = 20 * 60 * 1000; // dati più vecchi di 20 min: statusline.py scrive solo con una sessione Claude Code interattiva attiva
 const VALUES_STILL_HINT_MS = 30 * 60 * 1000; // percentuali invariate da più di così: suggerisci di scrivere nel terminale
-const PLAN_KEY = 'claude-monitor-plan';
-const PLAN_SLOT_SIGNATURE_KEY = 'claude-monitor-plan-slot-signature'; // config fasce sotto cui PLAN_KEY è stato scritto, vedi currentSlotSignature()
-const NAMED_PLANS_KEY = 'claude-monitor-named-plans';
+// demo con dati di esempio: ?demo nell'URL, automatica su GitHub Pages (dove
+// data/state.json non esiste). I piani della demo hanno chiavi proprie, così
+// provarla su un'installazione vera non tocca il piano reale.
+const DEMO = URL_PARAMS.has('demo') || location.hostname.endsWith('github.io');
+const PLAN_NS = DEMO ? 'claude-monitor-demo' : 'claude-monitor';
+const PLAN_KEY = PLAN_NS + '-plan';
+const PLAN_SLOT_SIGNATURE_KEY = PLAN_NS + '-plan-slot-signature'; // config fasce sotto cui PLAN_KEY è stato scritto, vedi currentSlotSignature()
+const NAMED_PLANS_KEY = PLAN_NS + '-named-plans';
 const MAX_SAVED_PLANS = 112; // come le settimane dell'anno
 const THEME_KEY = 'claude-monitor-theme';
 const TZ_KEY = 'claude-monitor-tz';
@@ -260,6 +267,7 @@ function applyStrings() {
   document.getElementById('lbl-privacy-link2').textContent = T.privacyLink;
   document.getElementById('lbl-storage-link2').textContent = T.storageLink;
   document.getElementById('lbl-saved-plans-link').textContent = T.savedPlansLink;
+  if (DEMO) document.getElementById('lbl-saved-plans-link').href = 'saved-plans.html?demo';
   document.getElementById('lbl-icons-credit').innerHTML = T.iconsCreditPrefix +
     '<a href="https://iconoir.com/" target="_blank" rel="noopener">iconoir.com</a> &amp; ' +
     '<a href="https://lucide.dev/" target="_blank" rel="noopener">lucide.dev</a>';
@@ -305,8 +313,18 @@ function computeStreamState() {
 }
 
 function setStreamBanner(state) {
-  streamState = state;
   const banner = document.getElementById('stream-banner');
+  if (DEMO) {
+    streamState = 'connected';
+    banner.classList.add('connected');
+    banner.classList.remove('disconnected');
+    document.getElementById('stream-banner-title').textContent = T.demoTitle;
+    const demoHint = document.getElementById('stream-banner-hint');
+    demoHint.hidden = false;
+    demoHint.innerHTML = T.demoHint;
+    return;
+  }
+  streamState = state;
   banner.classList.toggle('connected', state === 'connected');
   banner.classList.toggle('disconnected', state !== 'connected');
   const title = { connected: T.streamConnected, nolimits: T.streamNoLimits, disconnected: T.streamDisconnected }[state];
@@ -1190,12 +1208,63 @@ function render(data) {
 // calendario venga ricostruito sotto di te ogni pochi secondi
 window.DEBUG_PAUSE_REFRESH = false;
 
+// dati di esempio per la demo, sempre "freschi": settimana che si azzera tra 3
+// giorni, slot passati del piano di default segnati come lavorati, uso settimanale
+// poco sotto la quota pianificata fin qui
+function demoState() {
+  const now = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  const fmt = d => pad(d.getDate()) + '/' + pad(d.getMonth() + 1) + '/' + d.getFullYear() + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  const weekReset = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 3, 23, 0);
+  const sessionReset = new Date(now.getTime() + 150 * 60000);
+  sessionReset.setMinutes(0, 0, 0);
+  const nowHour = now.getHours() + now.getMinutes() / 60;
+  const today = dateOnly(now).getTime();
+  const worked = {};
+  let planned = 0;
+  let elapsed = 0;
+  computeDisplayDays(weekReset, DAY_COUNT).forEach(d => {
+    SLOT_KEYS.forEach(key => {
+      if (!defaultActive(d.getDay(), key)) return;
+      planned++;
+      const b = SLOT_BOUNDS[key];
+      const t = d.getTime();
+      const done = t < today ? 1 : t > today ? 0 : Math.max(0, Math.min(1, (nowHour - b.start) / (b.end - b.start)));
+      elapsed += done;
+      if (done === 1) worked[isoDateLocal(d) + ':' + key] = true;
+    });
+  });
+  const ts = Date.now() / 1000;
+  return {
+    status: 'ok',
+    model: 'Demo',
+    used_pct: Math.max(3, Math.min(97, Math.round(elapsed / Math.max(1, planned) * 100) - 4)),
+    reset_date: fmt(weekReset),
+    five_hour_pct: 18,
+    five_hour_reset_date: fmt(sessionReset),
+    worked_slots: worked,
+    updated_at: ts,
+    hook_at: ts,
+    values_changed_at: ts,
+    limits_missing: false,
+  };
+}
+
 let lastStateText = null;
 
 async function poll(force = false) {
   // scheda in background: niente fetch né ricostruzioni del DOM, si riprende al
   // ritorno (il primo caricamento avviene comunque, con force)
   if (window.DEBUG_PAUSE_REFRESH || (document.hidden && !force)) return;
+  if (DEMO) {
+    if (!lastData) {
+      render(demoState());
+    } else {
+      lastData.updated_at = lastData.hook_at = lastData.values_changed_at = Date.now() / 1000;
+      updateTimeDisplays();
+    }
+    return;
+  }
   try {
     const res = await fetch('data/state.json', { cache: 'no-store' });
     if (res.ok) {
@@ -1240,4 +1309,10 @@ async function poll(force = false) {
     poll();
     renderPlan();
   });
+  // sequenza animata usata per registrare la GIF del README (tools/make-demo-gif.sh)
+  if (DEMO && URL_PARAMS.has('tour')) {
+    const tour = document.createElement('script');
+    tour.src = 'tools/demo-tour.js';
+    document.body.appendChild(tour);
+  }
 })();

@@ -40,6 +40,8 @@ window.I18N.en = {
   copied: 'Copied',
   streamConnected: '● Stream connected',
   streamNoLimits: '● Stream connected, but no usage data',
+  demoTitle: '● Demo with sample data',
+  demoHint: 'The percentages are made up; you can edit the plan and it stays only in this browser. To see your real limits, <a href="https://github.com/frazac/claude-monitor-limes">install it from GitHub</a>.',
   streamStillPrefix: 'Percentages unchanged for ',
   streamStillSuffix: '. If you work in the desktop app, the terminal <code>claude</code> session doesn\'t refresh them on its own: send it any message to get current values.',
   noApiResponse: 'No API response in this session',

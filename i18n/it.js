@@ -40,6 +40,8 @@ window.I18N.it = {
   copied: 'Copiato',
   streamConnected: '● Stream collegato',
   streamNoLimits: '● Stream collegato, ma senza dati d\'uso',
+  demoTitle: '● Demo con dati di esempio',
+  demoHint: 'Le percentuali sono inventate; il piano si può modificare e resta solo in questo browser. Per vedere i tuoi limiti veri, <a href="https://github.com/frazac/claude-monitor-limes">installalo da GitHub</a>.',
   streamStillPrefix: 'Percentuali ferme da ',
   streamStillSuffix: '. Se lavori nell\'app desktop, la sessione <code>claude</code> del terminale non le aggiorna da sola: scrivile un messaggio qualsiasi per avere i valori attuali.',
   noApiResponse: 'Nessuna risposta API in questa sessione',

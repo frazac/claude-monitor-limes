@@ -205,6 +205,7 @@
 .stream-banner-title { font-weight: 600; }
 .stream-banner-cmd { margin-top: 0.4rem; opacity: 0.9; }
 .stream-banner-hint { margin-top: 0.4rem; color: var(--fg); line-height: 1.6; }
+.stream-banner-hint a { color: inherit; }
 .stream-banner-hint code { font-family: inherit; background: var(--tile-fill); border-radius: 4px; padding: 0 0.3rem; }
 .stream-banner-cmd p { margin: 0.4rem 0 0 0; line-height: 1.9; }
 .copyable {

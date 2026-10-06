@@ -6,14 +6,30 @@ Una piccola dashboard locale che mostra l'uso di Claude Code rispetto ai limiti
 settimanali e alle 5 ore di Anthropic, e ti permette di pianificare i tuoi slot di
 lavoro attorno a quei limiti.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/demo-it-dark.gif">
+  <img alt="La dashboard: uso della sessione e della settimana, le soglie e il calendario settimanale degli slot, che si rinumera a ogni clic" src="docs/demo-it-light.gif" width="648">
+</picture>
+
+**Provala senza installare niente:** [demo online con dati di esempio](https://frazac.github.io/claude-monitor-limes/).
+Sulla tua copia aggiungi `?demo` all'indirizzo (es. `http://127.0.0.1:8931/index.html?demo`).
+
+- **Uso della sessione e della settimana**, con il tempo esatto che manca a ogni reset.
+- **Un calendario settimanale degli slot di lavoro**: pianifichi quando userai Claude, e la
+  dashboard ti dice se sei sopra o sotto la quota che avevi previsto fin qui.
+- **Gli slot in cui hai lavorato davvero**, letti dai log locali di Claude Code.
+- **Tutto resta sul tuo computer**: nessun account, nessun server, niente inviato altrove.
+
+Serve un piano Claude Pro o Max e Claude Code in un terminale: dettagli qui sotto.
+
 ## Come funziona
 
 Claude Code espone i dati di utilizzo (percentuali `five_hour` / `seven_day`) solo
 tramite il suo **hook della statusline** — non esiste un'API o un comando CLI separato
 per interrogarli on demand. `statusline.py` è pensato per essere proprio quell'hook:
 ogni volta che Claude Code ridisegna la sua statusline (a una nuova risposta, all'avvio
-di una sessione, o ogni `refreshInterval` secondi mentre è inattiva), riceve i dati di
-utilizzo correnti su stdin, stampa una riga di stato compatta per il terminale, e
+di una sessione, o ogni `refreshInterval` secondi mentre è inattiva), riceve su stdin
+gli ultimi dati di utilizzo che quella sessione ha avuto dall'API, stampa una riga di stato compatta per il terminale, e
 scrive uno snapshot in `data/state.json`. La dashboard web (`index.html`) si limita a
 leggere quel file e a mostrarlo — non parla mai direttamente con Claude Code o con
 Anthropic.
